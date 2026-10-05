@@ -1,0 +1,5 @@
+.git
+.base44
+__pycache__
+*.pyc
+.venv

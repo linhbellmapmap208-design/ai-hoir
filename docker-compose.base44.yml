@@ -1,0 +1,39 @@
+# Base44 development stack for the TransKun piano-transcription API.
+#
+# The application source is bind-mounted from the repository, so edits are
+# picked up by uvicorn's reloader without rebuilding. Rebuild only when
+# requirements.txt / Dockerfile.base44 change:
+#   docker compose -f docker-compose.base44.yml up -d --build
+services:
+  transcriber:
+    build:
+      context: .
+      dockerfile: Dockerfile.base44
+    image: base44/ai-hoir-transkun:dev
+    working_dir: /app
+    environment:
+      - DEVICE=cpu
+      - WATCHFILES_FORCE_POLLING=true
+      - BASE44_PUBLIC_HOST_SUFFIX=${BASE44_PUBLIC_HOST_SUFFIX}
+    command:
+      - uvicorn
+      - app.main:app
+      - --host=0.0.0.0
+      - --port=3000
+      - --reload
+      - --reload-dir=/app/app
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./:/app
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:3000/health', timeout=3).status == 200 else 1)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    restart: on-failure

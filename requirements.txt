@@ -1,0 +1,8 @@
+# Runtime dependencies for the TransKun transcription API.
+# torch / torchaudio are installed from the CPU wheel index in Dockerfile.base44.
+numpy<2
+transkun==2.0.1
+fastapi
+uvicorn[standard]
+python-multipart
+setuptools
