@@ -81,6 +81,17 @@ INDEX_TEMPLATE = """<!doctype html>
     <tr><td><code>GET /docs</code></td><td>Interactive API documentation.</td></tr>
   </table>
 
+  <h2>API key</h2>
+  <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+    <input id="apiKey" readonly value="__API_KEY_VALUE__"
+      style="flex:1 1 240px; min-width:0; background:#1b1f2a; border:1px solid #2a3040; border-radius:8px;
+             padding:10px 12px; color:#e6e8ee; font:13px ui-monospace,SFMono-Regular,Menlo,monospace;">
+    <button id="copyKey" type="button"
+      style="padding:10px 14px; border:0; border-radius:8px; background:#3b82f6; color:#fff;
+             font:13px ui-sans-serif,system-ui,sans-serif; cursor:pointer;">Copy</button>
+  </div>
+  <p class="hint">Gửi key này ở header <code>X-API-Key</code> (hoặc <code>Authorization: Bearer</code> / <code>?api_key=</code>) với mỗi request tới <code>/transcribe</code> hoặc <code>/transcriber</code>.</p>
+
   <h2>Model link for your bot</h2>
   <pre>__PUBLIC_BASE__/transcribe</pre>
   <p class="hint">__API_KEY_HINT__File: <code>curl -H "X-API-Key: YOUR_KEY" -F "file=@song.mp3" __PUBLIC_BASE__/transcriber -o out.mid</code><br>
@@ -108,6 +119,14 @@ INDEX_TEMPLATE = """<!doctype html>
     }
   }
   poll();
+
+  document.getElementById('copyKey')?.addEventListener('click', async () => {
+    const el = document.getElementById('apiKey');
+    try { await navigator.clipboard.writeText(el.value); }
+    catch (e) { el.select(); document.execCommand('copy'); }
+    const b = document.getElementById('copyKey'); const t = b.textContent;
+    b.textContent = 'Copied!'; setTimeout(() => { b.textContent = t; }, 1500);
+  });
 </script>
 </body>
 </html>
@@ -274,4 +293,8 @@ async def transcribe(
 @app.get("/", response_class=HTMLResponse)
 def index():
     hint = "<strong>API key required.</strong> Send it via the <code>X-API-Key</code> header, <code>Authorization: Bearer &lt;key&gt;</code>, or <code>?api_key=</code>.<br>" if API_KEY else ""
-    return INDEX_TEMPLATE.replace("__PUBLIC_BASE__", PUBLIC_BASE).replace("__API_KEY_HINT__", hint)
+    return (
+        INDEX_TEMPLATE.replace("__PUBLIC_BASE__", PUBLIC_BASE)
+        .replace("__API_KEY_HINT__", hint)
+        .replace("__API_KEY_VALUE__", API_KEY or "")
+    )
