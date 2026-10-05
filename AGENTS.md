@@ -54,7 +54,12 @@ docker compose -f docker-compose.base44.yml logs -f transcriber
 
 ## API
 One handler serves all of these, so a client can use whichever shape it already speaks:
-- `POST /transcribe` and `POST /transcriber`, plus `GET /transcriber`.
+- `POST /transcribe` and `POST /transcriber`, plus `GET /transcribe`, `GET /transcriber`.
+- The Discord bot ("Teto Transcriber") actually calls **`POST /transcribe/predict`** —
+  confirmed from the uvicorn access log (it returned `404 {"detail":"Not Found"}`, i.e.
+  the request already reached this app, only the path was missing). `/transcribe/predict`,
+  `/transcriber/predict` (POST and GET) are registered as aliases of the same handler.
+  **When a client reports a 404, read the access log first**: it names the exact path.
 - Input is **either** an audio file (`file` multipart field) **or** a link
   (`url` / `link` / `soundcloud` field, JSON key, or query param). Links are fetched
   with **yt-dlp** (SoundCloud and anything else yt-dlp supports) and converted to mp3

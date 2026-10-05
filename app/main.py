@@ -183,8 +183,13 @@ def _process(upload_path, upload_stem, url, work_dir):
 
 
 @app.post("/transcribe")
+@app.get("/transcribe")
+@app.post("/transcribe/predict")
+@app.get("/transcribe/predict")
 @app.post("/transcriber")
 @app.get("/transcriber")
+@app.post("/transcriber/predict")
+@app.get("/transcriber/predict")
 async def transcribe(
     request: Request,
     format: str = Query("midi", pattern="^(midi|json)$"),
