@@ -51,6 +51,12 @@ docker compose -f docker-compose.base44.yml logs -f transcriber
 - **CPU inference is slow** — measured ~134 s for a 3:57 track (~0.6x realtime) on
   4 cores; a 2.5 s clip takes a few seconds. That is expected, not a hang. The
   healthcheck uses a short timeout but does not kill the container.
+- **Thread count is `CPU_THREADS`** (compose env, default `64`). `app/transcriber.py`
+  applies it at import time to `torch.set_num_threads` / `set_num_interop_threads`.
+  It is a *request*, not a promise: the machine's own core count is the ceiling.
+  Measured on this sandbox (4 vCPU, 15 s clip): `CPU_THREADS=4` → 11.0 s,
+  `CPU_THREADS=64` → 14.5 s. Oversubscribing beyond the physical cores is slower, so
+  set it to (or near) the real core count of whatever box you deploy on.
 
 ## API
 One handler serves all of these, so a client can use whichever shape it already speaks:

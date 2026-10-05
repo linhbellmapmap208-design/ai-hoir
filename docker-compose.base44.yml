@@ -13,6 +13,7 @@ services:
     working_dir: /app
     environment:
       - DEVICE=cpu
+      - CPU_THREADS=64
       - WATCHFILES_FORCE_POLLING=true
       - BASE44_PUBLIC_HOST_SUFFIX=${BASE44_PUBLIC_HOST_SUFFIX}
     command:

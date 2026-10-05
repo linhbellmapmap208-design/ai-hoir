@@ -14,6 +14,15 @@ import torch
 
 DEVICE = os.environ.get("DEVICE", "cpu")
 
+# Threads the model may use for CPU inference. The machine's own core count is the
+# real ceiling - asking for more than the box has only adds scheduling overhead.
+CPU_THREADS = max(1, int(os.environ.get("CPU_THREADS", "64")))
+torch.set_num_threads(CPU_THREADS)
+try:
+    torch.set_num_interop_threads(CPU_THREADS)
+except RuntimeError:
+    pass  # interop pool already initialised - intra-op threads are the ones that matter here
+
 _model = None
 _load_error = None
 _ready = threading.Event()
