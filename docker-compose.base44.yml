@@ -13,7 +13,8 @@ services:
     working_dir: /app
     environment:
       - DEVICE=cpu
-      - CPU_THREADS=64
+      - CPU_THREADS=4
+      - DEFAULT_BPM=120
       - WATCHFILES_FORCE_POLLING=true
       - BASE44_PUBLIC_HOST_SUFFIX=${BASE44_PUBLIC_HOST_SUFFIX}
     env_file:

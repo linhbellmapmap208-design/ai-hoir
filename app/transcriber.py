@@ -16,12 +16,16 @@ DEVICE = os.environ.get("DEVICE", "cpu")
 
 # Threads the model may use for CPU inference. The machine's own core count is the
 # real ceiling - asking for more than the box has only adds scheduling overhead.
-CPU_THREADS = max(1, int(os.environ.get("CPU_THREADS", "64")))
+CPU_THREADS = max(1, int(os.environ.get("CPU_THREADS", "4")))
 torch.set_num_threads(CPU_THREADS)
 try:
     torch.set_num_interop_threads(CPU_THREADS)
 except RuntimeError:
     pass  # interop pool already initialised - intra-op threads are the ones that matter here
+
+# Tempo written into every output MIDI. Notes keep their real (second-based) timing -
+# `_set_default_bpm` rescales ticks so the declared BPM changes but playback does not.
+DEFAULT_BPM = max(1, int(os.environ.get("DEFAULT_BPM", "120")))
 
 _model = None
 _load_error = None
@@ -166,6 +170,51 @@ def _midi_channels(midi_bytes):
     return sorted(channels)
 
 
+def _set_default_bpm(midi_bytes, bpm):
+    """Declare a fixed default tempo in the MIDI without changing any note's timing.
+
+    transkun's `writeMidi` emits a single constant tempo (pretty_midi's 120 BPM), so we
+    can keep playback identical by rescaling every delta-time by `orig_tempo / new_tempo`
+    and rewriting the tempo meta. Seconds-per-tick stays the same; only the BPM number
+    shown by players/editors changes.
+    """
+    import io
+
+    import mido
+
+    mid = mido.MidiFile(file=io.BytesIO(midi_bytes))
+    new_tempo = mido.bpm2tempo(bpm)
+
+    orig_tempo = 500000  # 120 BPM, pretty_midi's default
+    for track in mid.tracks:
+        for msg in track:
+            if msg.type == "set_tempo":
+                orig_tempo = msg.tempo
+                break
+        else:
+            continue
+        break
+    scale = orig_tempo / new_tempo
+
+    out = mido.MidiFile(ticks_per_beat=mid.ticks_per_beat)
+    for track in mid.tracks:
+        new_track = mido.MidiTrack()
+        out.tracks.append(new_track)
+        for msg in track:
+            msg = msg.copy()
+            if msg.type == "set_tempo":
+                msg.tempo = new_tempo
+            msg.time = max(0, round(msg.time * scale))
+            new_track.append(msg)
+
+    if out.tracks and not any(m.type == "set_tempo" for tr in out.tracks for m in tr):
+        out.tracks[0].insert(0, mido.MetaMessage("set_tempo", tempo=new_tempo, time=0))
+
+    buf = io.BytesIO()
+    out.save(file=buf)
+    return buf.getvalue()
+
+
 def transcribe_file(audio_path):
     """Transcribe one audio file.
 
@@ -192,6 +241,9 @@ def transcribe_file(audio_path):
         midi_bytes = Path(tmp_path).read_bytes()
     finally:
         os.remove(tmp_path)
+
+    # Declare the default BPM without altering real note timing (seconds stay the same).
+    midi_bytes = _set_default_bpm(midi_bytes, DEFAULT_BPM)
 
     channels = _midi_channels(midi_bytes)
     channel = channels[0] if channels else 0
