@@ -16,6 +16,8 @@ services:
       - CPU_THREADS=64
       - WATCHFILES_FORCE_POLLING=true
       - BASE44_PUBLIC_HOST_SUFFIX=${BASE44_PUBLIC_HOST_SUFFIX}
+    env_file:
+      - /run/base44/app.env
     command:
       - uvicorn
       - app.main:app

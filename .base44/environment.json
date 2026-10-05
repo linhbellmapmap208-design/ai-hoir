@@ -2,5 +2,12 @@
   "previewPort": 3000,
   "healthPath": "/health",
   "startCommand": "docker compose -f docker-compose.base44.yml up -d",
-  "secrets": []
+  "secrets": [
+    {
+      "name": "API_KEY",
+      "description": "API key required on every /transcribe and /transcriber request (sent as X-API-Key header, Authorization: Bearer, or ?api_key=). Generate any random string; the bot must send the same value.",
+      "requiredAtBoot": true,
+      "generatedForDevelopment": true
+    }
+  ]
 }

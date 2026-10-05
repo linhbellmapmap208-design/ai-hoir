@@ -75,6 +75,14 @@ One handler serves all of these, so a client can use whichever shape it already 
   `audio/midi` file itself, with the channel in the `X-Midi-Channel` header and the
   note count in `X-Note-Count`.
 - `GET /health`, `GET /docs`, `GET /` (landing page showing the public bot link).
+- **API key** (`API_KEY` env, delivered via `/run/base44/app.env`). When set, every
+  `/transcribe*` and `/transcriber*` route requires it; send as `X-API-Key`,
+  `Authorization: Bearer <key>`, or `?api_key=`. `/health`, `/`, `/docs` stay open.
+  Empty `API_KEY` = open (dev). `app/main.py` enforces this in an HTTP middleware that
+  lets CORS handle `OPTIONS` first and uses `secrets.compare_digest`.
+- **Auto-wake:** `transcriber.wake()` is called at the top of the transcribe handler (and
+  at startup via `lifespan → warm_up`). `warm_up` is idempotent (`_load_started` event),
+  so a request to a cold process kicks off the load on demand instead of waiting blindly.
 
 `/transcriber` exists specifically because the Discord bot ("Teto Transcriber") calls
 it; it originally 404'd because only `/transcribe` was registered.

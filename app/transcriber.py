@@ -27,6 +27,7 @@ _model = None
 _load_error = None
 _ready = threading.Event()
 _load_lock = threading.Lock()
+_load_started = threading.Event()  # set once a load thread has been kicked off
 
 MODEL_LOAD_TIMEOUT_SECONDS = 600
 
@@ -68,8 +69,22 @@ def _load_blocking():
 
 
 def warm_up():
-    """Start loading the model in the background so the server can bind immediately."""
+    """Start loading the model in the background so the server can bind immediately.
+
+    Idempotent: only the first call actually spawns the load thread - `_load_blocking`
+    re-checks under the lock, so later calls are no-ops even if they sneak through.
+    """
+    if _load_started.is_set():
+        return
+    _load_started.set()
     threading.Thread(target=_load_blocking, name="transkun-load", daemon=True).start()
+
+
+def wake():
+    """Ensure the model is loaded (or loading). Called on every transcribe request so a
+    cold process - e.g. one whose startup warm-up never fired - still wakes on demand."""
+    if _model is None and _load_error is None:
+        warm_up()
 
 
 def is_ready():

@@ -6,6 +6,7 @@ back, along with the MIDI channel the notes were written to.
 
 import base64
 import os
+import secrets
 import shutil
 import tempfile
 from contextlib import asynccontextmanager
@@ -21,6 +22,11 @@ from . import transcriber
 
 PUBLIC_SUFFIX = os.environ.get("BASE44_PUBLIC_HOST_SUFFIX", "")
 PUBLIC_BASE = f"https://3000-{PUBLIC_SUFFIX}" if PUBLIC_SUFFIX else "http://localhost:3000"
+
+# When set, every transcribe/transcriber route requires this key. Clients may send it
+# as `X-API-Key`, `Authorization: Bearer <key>`, or `?api_key=`. Empty = open (dev).
+API_KEY = os.environ.get("API_KEY", "").strip()
+PROTECTED_PREFIXES = ("/transcribe", "/transcriber")
 
 INDEX_TEMPLATE = """<!doctype html>
 <html lang="en">
@@ -77,8 +83,8 @@ INDEX_TEMPLATE = """<!doctype html>
 
   <h2>Model link for your bot</h2>
   <pre>__PUBLIC_BASE__/transcribe</pre>
-  <p class="hint">File: <code>curl -F "file=@song.mp3" __PUBLIC_BASE__/transcriber -o out.mid</code><br>
-     Link: <code>curl -F "link=https://soundcloud.com/..." __PUBLIC_BASE__/transcriber -o out.mid</code></p>
+  <p class="hint">__API_KEY_HINT__File: <code>curl -H "X-API-Key: YOUR_KEY" -F "file=@song.mp3" __PUBLIC_BASE__/transcriber -o out.mid</code><br>
+     Link: <code>curl -H "X-API-Key: YOUR_KEY" -F "link=https://soundcloud.com/..." __PUBLIC_BASE__/transcriber -o out.mid</code></p>
 </main>
 <script>
   async function poll() {
@@ -122,6 +128,24 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["X-Midi-Channel", "X-Note-Count", "Content-Disposition"],
 )
+
+
+@app.middleware("http")
+async def _api_key_guard(request: Request, call_next):
+    # Let CORS handle preflight without a key check.
+    if request.method != "OPTIONS" and API_KEY:
+        path = request.url.path
+        if path.startswith(PROTECTED_PREFIXES):
+            provided = (
+                request.headers.get("x-api-key", "").strip()
+                or request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+                or request.query_params.get("api_key", "").strip()
+            )
+            if not provided or not secrets.compare_digest(provided, API_KEY):
+                return JSONResponse(
+                    status_code=401, content={"detail": "invalid or missing API key"}
+                )
+    return await call_next(request)
 
 
 @app.get("/health")
@@ -195,6 +219,9 @@ async def transcribe(
     format: str = Query("midi", pattern="^(midi|json)$"),
     include_notes: bool = Query(False),
 ):
+    # Wake the model on demand so a request to a cold process still triggers the load.
+    transcriber.wake()
+
     upload, url = await _request_input(request)
     if upload is None and not url:
         raise HTTPException(
@@ -246,4 +273,5 @@ async def transcribe(
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return INDEX_TEMPLATE.replace("__PUBLIC_BASE__", PUBLIC_BASE)
+    hint = "<strong>API key required.</strong> Send it via the <code>X-API-Key</code> header, <code>Authorization: Bearer &lt;key&gt;</code>, or <code>?api_key=</code>.<br>" if API_KEY else ""
+    return INDEX_TEMPLATE.replace("__PUBLIC_BASE__", PUBLIC_BASE).replace("__API_KEY_HINT__", hint)
