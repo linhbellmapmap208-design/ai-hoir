@@ -6,13 +6,16 @@ back, along with the MIDI channel the notes were written to.
 
 import base64
 import os
+import shutil
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response
+from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import UploadFile
 
 from . import transcriber
 
@@ -58,11 +61,13 @@ INDEX_TEMPLATE = """<!doctype html>
 
   <h2>Endpoints</h2>
   <table>
-    <tr><td><code>POST /transcribe</code></td>
-        <td>Multipart upload of an audio file (field <code>file</code>) &rarr; MIDI file.
-            The MIDI channel is returned in the <code>X-Midi-Channel</code> header and the
-            note count in <code>X-Note-Count</code>.</td></tr>
-    <tr><td><code>POST /transcribe?format=json</code></td>
+    <tr><td><code>POST /transcribe</code><br><code>POST /transcriber</code></td>
+        <td>Send <strong>either</strong> an audio file (multipart field <code>file</code>)
+            <strong>or</strong> a link (field <code>url</code> / <code>link</code> &mdash; e.g. a
+            SoundCloud track, fetched with yt-dlp) &rarr; MIDI file. The MIDI channel comes back
+            in the <code>X-Midi-Channel</code> header, the note count in
+            <code>X-Note-Count</code>.</td></tr>
+    <tr><td><code>...?format=json</code></td>
         <td>JSON response with <code>midi_base64</code>, <code>channel</code> and
             <code>note_count</code>. Add <code>&amp;include_notes=true</code> for every note,
             each tagged with its channel.</td></tr>
@@ -72,7 +77,8 @@ INDEX_TEMPLATE = """<!doctype html>
 
   <h2>Model link for your bot</h2>
   <pre>__PUBLIC_BASE__/transcribe</pre>
-  <p class="hint">Example: <code>curl -F "file=@song.mp3" __PUBLIC_BASE__/transcribe -o out.mid</code></p>
+  <p class="hint">File: <code>curl -F "file=@song.mp3" __PUBLIC_BASE__/transcriber -o out.mid</code><br>
+     Link: <code>curl -F "link=https://soundcloud.com/..." __PUBLIC_BASE__/transcriber -o out.mid</code></p>
 </main>
 <script>
   async function poll() {
@@ -137,27 +143,82 @@ def health():
     }
 
 
+def _safe_stem(name):
+    cleaned = "".join(ch if ch.isalnum() or ch in " -_" else "_" for ch in (name or "")).strip()
+    return cleaned[:80].strip() or "transcription"
+
+
+async def _request_input(request):
+    """Pull an uploaded file and/or a link out of a multipart, form or JSON body."""
+    upload = None
+    fields = {}
+
+    if request.headers.get("content-type", "").startswith("application/json"):
+        fields = await request.json()
+    else:
+        form = await request.form()
+        candidate = form.get("file")
+        if isinstance(candidate, UploadFile):
+            upload = candidate
+        fields = form
+
+    url = None
+    for key in ("url", "link", "soundcloud"):
+        value = fields.get(key) or request.query_params.get(key)
+        if value:
+            url = str(value).strip()
+            break
+
+    return upload, url
+
+
+def _process(upload_path, upload_stem, url, work_dir):
+    """Blocking part: resolve the input to a local audio file, then transcribe it."""
+    if upload_path is not None:
+        audio_path, stem = upload_path, upload_stem
+    else:
+        audio_path, title = transcriber.download_audio(url, work_dir)
+        stem = _safe_stem(title)
+    return transcriber.transcribe_file(audio_path), stem
+
+
 @app.post("/transcribe")
+@app.post("/transcriber")
+@app.get("/transcriber")
 async def transcribe(
-    file: UploadFile = File(...),
+    request: Request,
     format: str = Query("midi", pattern="^(midi|json)$"),
     include_notes: bool = Query(False),
 ):
-    suffix = Path(file.filename or "audio").suffix or ".mp3"
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(await file.read())
-        tmp_path = tmp.name
+    upload, url = await _request_input(request)
+    if upload is None and not url:
+        raise HTTPException(
+            status_code=422,
+            detail="send an audio file (field 'file') or a link (field 'url' or 'link')",
+        )
 
+    work_dir = tempfile.mkdtemp(prefix="transkun-")
     try:
-        result = transcriber.transcribe_file(tmp_path)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"could not transcribe audio: {exc}")
-    finally:
-        os.remove(tmp_path)
+        upload_path = upload_stem = None
+        if upload is not None:
+            suffix = Path(upload.filename or "audio").suffix or ".mp3"
+            upload_path = os.path.join(work_dir, f"input{suffix}")
+            with open(upload_path, "wb") as handle:
+                handle.write(await upload.read())
+            upload_stem = _safe_stem(Path(upload.filename or "").stem)
 
-    stem = Path(file.filename or "transcription").stem or "transcription"
+        try:
+            # Downloading and transcribing are blocking and CPU heavy - keep them
+            # off the event loop so /health and other requests stay responsive.
+            result, stem = await run_in_threadpool(
+                _process, upload_path, upload_stem, url, work_dir
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"could not transcribe audio: {exc}")
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
 
     if format == "json":
         payload = {

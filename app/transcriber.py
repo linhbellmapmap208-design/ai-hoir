@@ -96,6 +96,37 @@ def _read_mono_audio(audio_path, target_fs):
     return samples
 
 
+def download_audio(url, dest_dir):
+    """Download a SoundCloud (or any yt-dlp supported) link as an mp3.
+
+    Returns the path of the downloaded file and the track title.
+    """
+    import yt_dlp
+
+    options = {
+        "format": "bestaudio/best",
+        "outtmpl": os.path.join(dest_dir, "source.%(ext)s"),
+        "quiet": True,
+        "no_warnings": True,
+        "noprogress": True,
+        "noplaylist": True,
+        "postprocessors": [
+            {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}
+        ],
+    }
+
+    with yt_dlp.YoutubeDL(options) as ydl:
+        info = ydl.extract_info(url, download=True)
+
+    downloaded = sorted(Path(dest_dir).glob("source.mp3"))
+    if not downloaded:
+        downloaded = sorted(p for p in Path(dest_dir).iterdir() if p.suffix != ".part")
+    if not downloaded:
+        raise RuntimeError(f"yt-dlp produced no audio file for {url}")
+
+    return str(downloaded[0]), (info or {}).get("title") or ""
+
+
 def _midi_channels(midi_bytes):
     """Read back the MIDI channel(s) that note events were written to."""
     import io

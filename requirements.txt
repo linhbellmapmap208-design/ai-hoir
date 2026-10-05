@@ -5,4 +5,5 @@ transkun==2.0.1
 fastapi
 uvicorn[standard]
 python-multipart
+yt-dlp
 setuptools
