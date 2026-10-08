@@ -59,6 +59,18 @@ docker compose -f docker-compose.base44.yml logs -f transcriber
   lock within `BUSY_WAIT_SECONDS` (default `3`) gets a fast `503 Retry-After: 5` instead of
   grinding. The in-flight request finishes at full speed, then the next retry succeeds — so a
   retry storm resolves in ~one transcription rather than never.
+- **Finished results are memoized** (`_result_cache` in `transcriber.py`, keyed by a
+  SHA-256 of the audio bytes for uploads or the link for URLs). A bot that times out and
+  re-sends the same audio used to **re-transcribe from scratch on every retry** — so any clip
+  whose transcription outlasted one request timeout never completed for the bot. Now the first
+  request transcribes (foreground, still synchronized for direct callers) and caches the
+  result under its content key; every later retry of the same audio is served **instantly**
+  from the cache without touching the model or the lock. Entries expire after
+  `RESULT_TTL_SECONDS` (default `600s`) and the cache is capped at `RESULT_CACHE_MAX`
+  (default `16`, oldest evicted). `cache_key`/`_cache_get`/`_cache_put` live next to the
+  serialization lock. This fixes the re-transcribe-on-retry loop for any clip whose one-shot
+  transcription time is below the bot's overall retry window; clips longer than that window
+  still need faster (GPU) inference.
 - **CPU inference is slow** — measured ~134 s for a 3:57 track (~0.6x realtime) on
   4 cores; a short clip ~5.7 s. That is expected, not a hang. The healthcheck uses a
   short timeout but does not kill the container.

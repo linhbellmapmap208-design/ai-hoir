@@ -222,7 +222,10 @@ def _process(upload_path, upload_stem, url, work_dir):
     else:
         audio_path, title = transcriber.download_audio(url, work_dir)
         stem = _safe_stem(title)
-    return transcriber.transcribe_file(audio_path), stem
+    # A content/link key lets a bot's retries of the same audio reuse a finished result
+    # instead of re-running the (slow, CPU-bound) model every time.
+    key = transcriber.cache_key(audio_path, link=url)
+    return transcriber.transcribe_file(audio_path, key=key), stem
 
 
 @app.post("/transcribe")

@@ -4,9 +4,11 @@ The TransKun 2.0 checkpoint and its model config ship inside the `transkun`
 pip package, so nothing has to be downloaded at runtime.
 """
 
+import hashlib
 import os
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -32,6 +34,45 @@ DEFAULT_BPM = max(1, int(os.environ.get("DEFAULT_BPM", "120")))
 # out. A waiter that can't get the model within this window is told to retry shortly.
 _transcribe_lock = threading.Lock()
 BUSY_WAIT_SECONDS = float(os.environ.get("BUSY_WAIT_SECONDS", "3"))
+
+# Memoize finished transcriptions so a bot that re-sends the same audio (retries) gets
+# the result instantly instead of re-running the model and timing out again. Keyed by a
+# hash of the audio bytes (uploads) or the link (so link retries share too).
+_result_cache = {}            # key -> (timestamp: float, result dict)
+_cache_lock = threading.Lock()
+RESULT_TTL_SECONDS = float(os.environ.get("RESULT_TTL_SECONDS", "600"))
+RESULT_CACHE_MAX = int(os.environ.get("RESULT_CACHE_MAX", "16"))
+
+
+def cache_key(audio_path, link=None):
+    """Stable key for a finished result: content-hash for uploads, link-hash for URLs."""
+    if link:
+        return "url:" + hashlib.sha256(link.encode("utf-8")).hexdigest()[:32]
+    h = hashlib.sha256()
+    with open(audio_path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            h.update(chunk)
+    return "file:" + h.hexdigest()[:32]
+
+
+def _cache_get(key):
+    with _cache_lock:
+        entry = _result_cache.get(key)
+        if entry is None:
+            return None
+        ts, result = entry
+        if time.time() - ts > RESULT_TTL_SECONDS:
+            _result_cache.pop(key, None)
+            return None
+        return result
+
+
+def _cache_put(key, result):
+    with _cache_lock:
+        if len(_result_cache) >= RESULT_CACHE_MAX:
+            oldest = min(_result_cache, key=lambda k: _result_cache[k][0])
+            _result_cache.pop(oldest, None)
+        _result_cache[key] = (time.time(), result)
 
 _model = None
 _load_error = None
@@ -236,19 +277,34 @@ def _set_default_bpm(midi_bytes, bpm):
     return buf.getvalue()
 
 
-def transcribe_file(audio_path):
+def transcribe_file(audio_path, key=None):
     """Transcribe one audio file.
 
     Returns the MIDI bytes, the MIDI channel the notes are written to, and the
-    note list (each note carries its channel).
+    note list (each note carries its channel). When `key` is given, completed
+    results are memoized so a bot's retries of the same audio are served instantly
+    instead of re-transcribing (and re-timing-out) every time.
     """
     model = _require_model()
+
+    # Fast path: this exact audio was already transcribed - serve it without touching
+    # the model (so a retrying bot never re-pays the CPU cost).
+    if key:
+        cached = _cache_get(key)
+        if cached is not None:
+            return cached
 
     # Serialize: run one transcription at a time so concurrent bot retries don't
     # oversubscribe the CPU and time out together. Waiters get a fast 503 (Retry-After).
     if not _transcribe_lock.acquire(timeout=BUSY_WAIT_SECONDS):
         raise RuntimeError("model is busy transcribing another request; retry shortly")
     try:
+        # Another request may have finished the same audio while we waited for the lock.
+        if key:
+            cached = _cache_get(key)
+            if cached is not None:
+                return cached
+
         from transkun.Data import writeMidi
 
         samples = _read_mono_audio(audio_path, model.fs)
@@ -285,6 +341,9 @@ def transcribe_file(audio_path):
             for note in instrument.notes
         ]
 
-        return {"midi_bytes": midi_bytes, "channel": channel, "notes": notes}
+        result = {"midi_bytes": midi_bytes, "channel": channel, "notes": notes}
+        if key:
+            _cache_put(key, result)
+        return result
     finally:
         _transcribe_lock.release()
