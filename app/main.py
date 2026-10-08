@@ -68,7 +68,9 @@ INDEX_TEMPLATE = """<!doctype html>
   <h2>Endpoints</h2>
   <table>
     <tr><td><code>POST /transcribe</code><br><code>POST /transcriber</code></td>
-        <td>Send <strong>either</strong> an audio file (multipart field <code>file</code>)
+        <td>Send <strong>either</strong> an audio/video file (multipart field <code>file</code> &mdash;
+            <code>mp3</code>, <code>wav</code>, <code>m4a</code>, <code>mp4</code>, <code>mov</code>, &hellip;;
+            the audio track is extracted with ffmpeg)
             <strong>or</strong> a link (field <code>url</code> / <code>link</code> &mdash; e.g. a
             SoundCloud track, fetched with yt-dlp) &rarr; MIDI file. The MIDI channel comes back
             in the <code>X-Midi-Channel</code> header, the note count in

@@ -36,6 +36,9 @@ docker compose -f docker-compose.base44.yml logs -f transcriber
   so the model is "awake" and the bot never pays a first-request wake-up cost; it then
   stays resident forever (nothing unloads it). `restart: on-failure` re-loads it
   automatically if the container ever crashes.
+- **File formats:** any ffmpeg-readable container works as the `file` upload &mdash; audio
+  (mp3, wav, m4a, flac, ogg) **and video** (mp4, mov, mkv, webm). ffmpeg extracts the audio
+  track, so `/transcribe` accepts `.mp4`/`.mov` piano-screen recordings directly, no pre-extract.
 - **Audio decoding:** everything goes through ffmpeg via pydub, is downmixed to mono,
   and is resampled to the model's 44.1 kHz with `soxr`. TransKun expects a
   `(frames, channels)` tensor, so mono input needs an explicit trailing axis
