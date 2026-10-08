@@ -31,7 +31,11 @@ docker compose -f docker-compose.base44.yml logs -f transcriber
 - **Model loading is asynchronous.** `app/transcriber.py` loads the checkpoint in a
   daemon thread at startup so uvicorn can bind immediately. `/health` reports
   `loading` → `ready` (or `error` with the failure message). `/transcribe` waits up to
-  600 s for the load and returns 503 if it failed.
+  600 s for the load and returns 503 if it failed. After loading, `_warmup_inference`
+  runs one throwaway forward to prime the CPU/MKL kernels before the first real request,
+  so the model is "awake" and the bot never pays a first-request wake-up cost; it then
+  stays resident forever (nothing unloads it). `restart: on-failure` re-loads it
+  automatically if the container ever crashes.
 - **Audio decoding:** everything goes through ffmpeg via pydub, is downmixed to mono,
   and is resampled to the model's 44.1 kHz with `soxr`. TransKun expects a
   `(frames, channels)` tensor, so mono input needs an explicit trailing axis

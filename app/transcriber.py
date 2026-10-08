@@ -65,11 +65,26 @@ def _load_blocking():
 
             _model = model
             print(f"[transkun] model ready on device '{DEVICE}'", flush=True)
+            # Keep the model awake: prime the inference kernels before the first request.
+            _warmup_inference(model)
         except Exception as exc:  # keep the HTTP server alive so the error is visible
             _load_error = f"{type(exc).__name__}: {exc}"
             print(f"[transkun] model load failed: {_load_error}", flush=True)
         finally:
             _ready.set()
+
+
+def _warmup_inference(model):
+    """Prime the CPU/MKL kernels with one throwaway forward so the first real request
+    has no wake-up cost - the model is kept 'awake'. Non-fatal: a failure here never
+    blocks serving, the model is usable either way."""
+    try:
+        with torch.inference_mode():
+            dummy = torch.zeros(int(model.fs * 1.0), 1, device=DEVICE)
+            model.transcribe(dummy, discardSecondHalf=False)
+        print("[transkun] warmup inference done - model awake", flush=True)
+    except Exception as exc:
+        print(f"[transkun] warmup inference skipped: {type(exc).__name__}: {exc}", flush=True)
 
 
 def warm_up():
