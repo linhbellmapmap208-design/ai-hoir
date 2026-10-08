@@ -52,6 +52,13 @@ docker compose -f docker-compose.base44.yml logs -f transcriber
   `starlette.concurrency.run_in_threadpool`. Without this, a CPU-bound transcription
   blocks the single event loop: `/health` stops answering and the container flips to
   **unhealthy** for the whole run.
+- **Transcriptions are serialized** (`_transcribe_lock` in `transcriber.py`). The model
+  is CPU-bound, so if a bot's retries (or several users) hit `/transcribe` at once, running
+  them concurrently oversubscribes the cores and *every* request times out → a storm of
+  proxy 503s. Instead only one transcription runs at a time; a waiter that can't acquire the
+  lock within `BUSY_WAIT_SECONDS` (default `3`) gets a fast `503 Retry-After: 5` instead of
+  grinding. The in-flight request finishes at full speed, then the next retry succeeds — so a
+  retry storm resolves in ~one transcription rather than never.
 - **CPU inference is slow** — measured ~134 s for a 3:57 track (~0.6x realtime) on
   4 cores; a short clip ~5.7 s. That is expected, not a hang. The healthcheck uses a
   short timeout but does not kill the container.

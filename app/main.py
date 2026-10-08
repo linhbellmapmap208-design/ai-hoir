@@ -265,7 +265,9 @@ async def transcribe(
                 _process, upload_path, upload_stem, url, work_dir
             )
         except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc))
+            raise HTTPException(
+                status_code=503, detail=str(exc), headers={"Retry-After": "5"}
+            )
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"could not transcribe audio: {exc}")
     finally:

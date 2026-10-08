@@ -27,6 +27,12 @@ except RuntimeError:
 # `_set_default_bpm` rescales ticks so the declared BPM changes but playback does not.
 DEFAULT_BPM = max(1, int(os.environ.get("DEFAULT_BPM", "120")))
 
+# Only one transcription runs at a time. The model is CPU-bound, so letting a bot's
+# concurrent retries run together oversubscribes the cores and makes every request time
+# out. A waiter that can't get the model within this window is told to retry shortly.
+_transcribe_lock = threading.Lock()
+BUSY_WAIT_SECONDS = float(os.environ.get("BUSY_WAIT_SECONDS", "3"))
+
 _model = None
 _load_error = None
 _ready = threading.Event()
@@ -238,40 +244,47 @@ def transcribe_file(audio_path):
     """
     model = _require_model()
 
-    from transkun.Data import writeMidi
-
-    samples = _read_mono_audio(audio_path, model.fs)
-    # transkun expects (frames, channels); mono audio therefore needs a trailing axis.
-    x = torch.from_numpy(samples[:, None]).to(DEVICE)
-
-    with torch.inference_mode():
-        notes_est = model.transcribe(x, discardSecondHalf=False)
-
-    midi = writeMidi(notes_est)
-
-    with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
-        tmp_path = tmp.name
+    # Serialize: run one transcription at a time so concurrent bot retries don't
+    # oversubscribe the CPU and time out together. Waiters get a fast 503 (Retry-After).
+    if not _transcribe_lock.acquire(timeout=BUSY_WAIT_SECONDS):
+        raise RuntimeError("model is busy transcribing another request; retry shortly")
     try:
-        midi.write(tmp_path)
-        midi_bytes = Path(tmp_path).read_bytes()
+        from transkun.Data import writeMidi
+
+        samples = _read_mono_audio(audio_path, model.fs)
+        # transkun expects (frames, channels); mono audio therefore needs a trailing axis.
+        x = torch.from_numpy(samples[:, None]).to(DEVICE)
+
+        with torch.inference_mode():
+            notes_est = model.transcribe(x, discardSecondHalf=False)
+
+        midi = writeMidi(notes_est)
+
+        with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            midi.write(tmp_path)
+            midi_bytes = Path(tmp_path).read_bytes()
+        finally:
+            os.remove(tmp_path)
+
+        # Declare the default BPM without altering real note timing (seconds stay the same).
+        midi_bytes = _set_default_bpm(midi_bytes, DEFAULT_BPM)
+
+        channels = _midi_channels(midi_bytes)
+        channel = channels[0] if channels else 0
+        instrument = midi.instruments[0]
+        notes = [
+            {
+                "pitch": int(note.pitch),
+                "start": round(float(note.start), 4),
+                "end": round(float(note.end), 4),
+                "velocity": int(note.velocity),
+                "channel": channel,
+            }
+            for note in instrument.notes
+        ]
+
+        return {"midi_bytes": midi_bytes, "channel": channel, "notes": notes}
     finally:
-        os.remove(tmp_path)
-
-    # Declare the default BPM without altering real note timing (seconds stay the same).
-    midi_bytes = _set_default_bpm(midi_bytes, DEFAULT_BPM)
-
-    channels = _midi_channels(midi_bytes)
-    channel = channels[0] if channels else 0
-    instrument = midi.instruments[0]
-    notes = [
-        {
-            "pitch": int(note.pitch),
-            "start": round(float(note.start), 4),
-            "end": round(float(note.end), 4),
-            "velocity": int(note.velocity),
-            "channel": channel,
-        }
-        for note in instrument.notes
-    ]
-
-    return {"midi_bytes": midi_bytes, "channel": channel, "notes": notes}
+        _transcribe_lock.release()
