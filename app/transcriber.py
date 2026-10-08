@@ -229,7 +229,7 @@ def transcribe_file(audio_path):
     # transkun expects (frames, channels); mono audio therefore needs a trailing axis.
     x = torch.from_numpy(samples[:, None]).to(DEVICE)
 
-    with torch.no_grad():
+    with torch.inference_mode():
         notes_est = model.transcribe(x, discardSecondHalf=False)
 
     midi = writeMidi(notes_est)

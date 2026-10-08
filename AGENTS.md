@@ -49,8 +49,14 @@ docker compose -f docker-compose.base44.yml logs -f transcriber
   blocks the single event loop: `/health` stops answering and the container flips to
   **unhealthy** for the whole run.
 - **CPU inference is slow** — measured ~134 s for a 3:57 track (~0.6x realtime) on
-  4 cores; a 2.5 s clip takes a few seconds. That is expected, not a hang. The
-  healthcheck uses a short timeout but does not kill the container.
+  4 cores; a short clip ~5.7 s. That is expected, not a hang. The healthcheck uses a
+  short timeout but does not kill the container.
+  - Two real CPU levers are applied and roughly halved short-clip latency:
+    `torch.inference_mode()` (not `no_grad`) in `transcribe_file`, and
+    `OMP_NUM_THREADS`/`MKL_NUM_THREADS=4` (compose env, matching `CPU_THREADS`) to stop
+    thread oversubscription during decode. A 4.5 s piano clip went ~13 s → ~5.7 s.
+    Dynamic int8 quantization was tried and **hangs** on this model (it is scripted
+    internally), so it is not used. 100× needs a GPU, which this CPU sandbox lacks.
 - **Thread count is `CPU_THREADS`** (compose env, default `4`). `app/transcriber.py`
   applies it at import time to `torch.set_num_threads` / `set_num_interop_threads`.
   It is a *request*, not a promise: the machine's own core count is the ceiling.
