@@ -7,3 +7,4 @@ uvicorn[standard]
 python-multipart
 yt-dlp
 setuptools
+discord.py>=2.3
