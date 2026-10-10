@@ -78,17 +78,22 @@ _model = None
 _load_error = None
 _ready = threading.Event()
 _load_lock = threading.Lock()
-_load_started = threading.Event()  # set once a load thread has been kicked off
+_load_started = threading.Event()  # set while a load is in progress; cleared when it ends
+_last_load_attempt = 0.0           # throttles retries of a failed load
+LOAD_RETRY_COOLDOWN_SECONDS = float(os.environ.get("LOAD_RETRY_COOLDOWN_SECONDS", "30"))
 
 MODEL_LOAD_TIMEOUT_SECONDS = 600
 
 
 def _load_blocking():
-    """Load the checkpoint exactly once; record any failure instead of crashing."""
+    """Load the checkpoint; record any failure instead of crashing. A prior failure does
+    not block a later attempt, so `wake()` can recover the model after a transient error."""
     global _model, _load_error
     with _load_lock:
-        if _model is not None or _load_error is not None:
+        if _model is not None:
+            _load_started.clear()
             return
+        _load_error = None  # fresh attempt - clear any previous failure
         try:
             import moduleconf
             import transkun
@@ -119,6 +124,7 @@ def _load_blocking():
             print(f"[transkun] model load failed: {_load_error}", flush=True)
         finally:
             _ready.set()
+            _load_started.clear()
 
 
 def _warmup_inference(model):
@@ -137,19 +143,28 @@ def _warmup_inference(model):
 def warm_up():
     """Start loading the model in the background so the server can bind immediately.
 
-    Idempotent: only the first call actually spawns the load thread - `_load_blocking`
-    re-checks under the lock, so later calls are no-ops even if they sneak through.
+    Safe to call repeatedly: spawns at most one load at a time and only after the retry
+    cooldown, so a load that previously failed is retried on the next request instead of
+    being stuck forever. `_load_blocking` re-checks under the lock regardless.
     """
-    if _load_started.is_set():
+    if _model is not None:
         return
-    _load_started.set()
+    global _last_load_attempt
+    with _load_lock:
+        if _model is not None or _load_started.is_set():
+            return
+        if time.time() - _last_load_attempt < LOAD_RETRY_COOLDOWN_SECONDS:
+            return
+        _last_load_attempt = time.time()
+        _load_started.set()
+        _ready.clear()
     threading.Thread(target=_load_blocking, name="transkun-load", daemon=True).start()
 
 
 def wake():
     """Ensure the model is loaded (or loading). Called on every transcribe request so a
-    cold process - e.g. one whose startup warm-up never fired - still wakes on demand."""
-    if _model is None and _load_error is None:
+    cold process - or one whose load previously failed - still wakes on demand."""
+    if _model is None:
         warm_up()
 
 

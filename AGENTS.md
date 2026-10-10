@@ -121,9 +121,14 @@ One handler serves all of these, so a client can use whichever shape it already 
   bot's Discord **Client ID** (Application ID) and it builds the `oauth2/authorize` invite
   link with `scope=bot applications.commands` and `permissions=34816` (Send Messages +
   Attach Files). No secret needed — it runs in the browser; no bot runs inside this app.
-- **Auto-wake:** `transcriber.wake()` is called at the top of the transcribe handler (and
-  at startup via `lifespan → warm_up`). `warm_up` is idempotent (`_load_started` event),
-  so a request to a cold process kicks off the load on demand instead of waiting blindly.
+- **Auto-wake & load recovery:** `transcriber.wake()` is called at the top of the
+  transcribe handler (and at startup via `lifespan → warm_up`). It kicks off the load on
+  demand for a cold process. Crucially, a **failed** load no longer sticks: `_load_started`
+  is now cleared when the load finishes and `wake()` retries whenever the model is missing
+  (not only when no error was recorded), throttled by `LOAD_RETRY_COOLDOWN_SECONDS`
+  (default `30s`) so a failing load isn't re-spammed on every request. Previously `_load_started`
+  was set once and never cleared, so a first-load failure left the model permanently "still
+  loading" with every `wake()` a no-op — the "gọi model dậy ko thành công" bug.
 
 `/transcriber` exists specifically because the Discord bot ("Teto Transcriber") calls
 it; it originally 404'd because only `/transcribe` was registered.
