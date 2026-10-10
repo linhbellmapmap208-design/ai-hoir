@@ -224,7 +224,13 @@ def health():
 
 
 def _safe_stem(name):
-    cleaned = "".join(ch if ch.isalnum() or ch in " -_" else "_" for ch in (name or "")).strip()
+    # ASCII-only: it goes into the Content-Disposition HTTP header, which Starlette
+    # encodes as latin-1. A non-ASCII track/upload title (common on SoundCloud) would
+    # raise UnicodeEncodeError and turn the MIDI download into a 500.
+    cleaned = "".join(
+        ch if ch.isascii() and (ch.isalnum() or ch in " -_") else "_"
+        for ch in (name or "")
+    ).strip()
     return cleaned[:80].strip() or "transcription"
 
 
