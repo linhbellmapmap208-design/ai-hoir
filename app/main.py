@@ -94,6 +94,20 @@ INDEX_TEMPLATE = """<!doctype html>
   </div>
   <p class="hint">Gửi key này ở header <code>X-API-Key</code> (hoặc <code>Authorization: Bearer</code> / <code>?api_key=</code>) với mỗi request tới <code>/transcribe</code> hoặc <code>/transcriber</code>.</p>
 
+  <h2>Discord bot &mdash; invite link</h2>
+  <p class="sub">Dán <strong>Client ID</strong> (Application ID) của bot từ Discord Developer Portal &rarr; General Information, link mời bot vào server sẽ tự sinh.</p>
+  <div style="display:flex; flex-direction:column; gap:10px;">
+    <input id="discordClientId" placeholder="Dán Client ID tại đây&hellip;"
+      style="background:#1b1f2a; border:1px solid #2a3040; border-radius:8px; padding:10px 12px; color:#e6e8ee;
+             font:13px ui-monospace,SFMono-Regular,Menlo,monospace;">
+    <div id="inviteWrap" style="display:none;">
+      <pre id="inviteLink"></pre>
+      <a id="inviteAnchor" target="_blank" rel="noopener"
+        style="display:inline-block; margin-top:6px; padding:9px 14px; border-radius:8px; background:#5865F2;
+               color:#fff; text-decoration:none; font:13px ui-sans-serif,system-ui,sans-serif;">Add bot to server</a>
+    </div>
+  </div>
+
   <h2>Model link for your bot</h2>
   <pre>__PUBLIC_BASE__/transcribe</pre>
   <p class="hint">__API_KEY_HINT__File: <code>curl -H "X-API-Key: YOUR_KEY" -F "file=@song.mp3" __PUBLIC_BASE__/transcriber -o out.mid</code><br>
@@ -129,6 +143,27 @@ INDEX_TEMPLATE = """<!doctype html>
     const b = document.getElementById('copyKey'); const t = b.textContent;
     b.textContent = 'Copied!'; setTimeout(() => { b.textContent = t; }, 1500);
   });
+
+  // Discord bot invite link from the pasted client ID (pure client-side, no secret).
+  (function () {
+    const inp = document.getElementById('discordClientId');
+    const wrap = document.getElementById('inviteWrap');
+    const linkEl = document.getElementById('inviteLink');
+    const anchor = document.getElementById('inviteAnchor');
+    if (!inp) return;
+    // Send Messages (0x800) + Attach Files (0x8000) - enough to reply with a MIDI file.
+    const PERMS = 2048 | 32768;
+    inp.addEventListener('input', () => {
+      const id = inp.value.trim();
+      if (!id) { wrap.style.display = 'none'; return; }
+      const url = 'https://discord.com/oauth2/authorize?client_id='
+        + encodeURIComponent(id) + '&permissions=' + PERMS
+        + '&scope=bot%20applications.commands';
+      wrap.style.display = '';
+      linkEl.textContent = url;
+      anchor.href = url;
+    });
+  })();
 </script>
 </body>
 </html>

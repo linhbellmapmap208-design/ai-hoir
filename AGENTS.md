@@ -117,6 +117,10 @@ One handler serves all of these, so a client can use whichever shape it already 
   `Authorization: Bearer <key>`, or `?api_key=`. `/health`, `/`, `/docs` stay open.
   Empty `API_KEY` = open (dev). `app/main.py` enforces this in an HTTP middleware that
   lets CORS handle `OPTIONS` first and uses `secrets.compare_digest`.
+- **Discord invite widget** (`/` landing page): a client-side input lets a user paste the
+  bot's Discord **Client ID** (Application ID) and it builds the `oauth2/authorize` invite
+  link with `scope=bot applications.commands` and `permissions=34816` (Send Messages +
+  Attach Files). No secret needed — it runs in the browser; no bot runs inside this app.
 - **Auto-wake:** `transcriber.wake()` is called at the top of the transcribe handler (and
   at startup via `lifespan → warm_up`). `warm_up` is idempotent (`_load_started` event),
   so a request to a cold process kicks off the load on demand instead of waiting blindly.
